@@ -83,7 +83,10 @@ DISAGREEMENT_CAP = 0.60
 # that decide who pays for it.
 
 HUMAN_THRESHOLD = 0.35
-AI_THRESHOLD = 0.65
+AI_THRESHOLD = 0.75
+# Raised from 0.65. Plain human writing landed at 0.68 in the Milestone 1
+# trace, and an accusation is the expensive mistake. 0.75 still lets the
+# clearly-AI calibration sample (0.775) reach the AI label.
 
 # ⚠️ One thing that catches people out in Milestone 5. A weighted average can
 # only land between its two inputs — so while `style_signal` is still the stub

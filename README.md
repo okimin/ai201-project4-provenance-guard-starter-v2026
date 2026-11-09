@@ -166,15 +166,28 @@ The cap matters for the mirror case, a split that averages *high*. Model 0.95 wi
 
 | Label | Score range | The exact text a reader sees |
 |---|---|---|
-| high-confidence human |  |  |
-| unsure |  |  |
-| high-confidence AI |  |  |
+| high-confidence human | 0.00 – 0.35 | We think this was probably written by a person. Our checks didn't find the patterns we usually see in AI-generated text. |
+| unsure | 0.35 – 0.75 | We can't tell either way. This piece has some patterns that often show up in AI-generated text and some that are typical of people, and plenty of people simply write this way. We're not saying it was made with AI. |
+| high-confidence AI | 0.75 – 1.00 | This piece has strong patterns that are common in AI-generated text. That isn't proof: clear, plain writing by a person can look like this too. If you wrote it yourself, you can ask a person to review it using the reference number shown with this result. |
+
+The ranges come from `scoring.label_ranges()`, which reads them from `config.py`. A score of exactly 0.35 counts as human, and exactly 0.75 counts as AI. There are no gaps, and all three labels came up from the samples:
+
+| Input | combined | Label it got |
+|---|---|---|
+| `samples/clearly_human.json` | 0.257 | high-confidence human |
+| `samples/borderline.json` | 0.424 | unsure |
+| `samples/clearly_ai.json` | 0.775 | high-confidence AI |
+
+I raised the AI cutoff from the default 0.65 to **0.75**. The Milestone 1 trace put plain human writing at about 0.68, which 0.65 would accuse. 0.75 still lets clearly-AI text (0.775) reach the AI label. It doesn't save the plain-human calibration input (0.832), and that miss is logged above.
 
 **Why I worded the "unsure" one this way:**
 <!-- It's the hardest of the three. It has to admit uncertainty without
      sounding like an accusation, because the person reading it may well have
      written every word themselves. -->
 
+The person reading it may well have written every word, so the label has to be honest that we don't know without sounding like a soft accusation. It opens with "We can't tell either way" so the first thing they read is uncertainty, not suspicion. It names patterns of *both* kinds, so it doesn't sound like "probably AI, but we're being polite." "Plenty of people simply write this way" tells the writer their style is normal. It ends by saying outright that we're not claiming AI, because without that line a worried reader will assume we are. It avoids numbers and words like "confidence" or "score," which mean nothing to someone who has never heard of a threshold.
+
+The AI label has the same care built in. It says "patterns," not "you used AI," says plainly that it isn't proof, and tells the reader how to appeal.
 
 
 ---
@@ -194,59 +207,82 @@ The cap matters for the mirror case, a split that averages *high*. Model 0.95 wi
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "The importance of effective time management cannot be overstated in today'"'"'s fast-paced work environment. Professionals who develop strong organizational habits are better positioned to meet deadlines and reduce stress. There are several key strategies that can help individuals improve their productivity.", "creator_id": "dan"}'
+  -d @samples/clearly_ai.json
 ```
 
 ```json
 {
-  "confidence": 0.8033,
-  "content_id": "c_9a65a77f5414",
-  "guess": "unsure",
-  "label": "PLACEHOLDER — labels arrive in Milestone 5.",
-  "model_score": 0.8033,
-  "style_score": null
+  "confidence": 0.775,
+  "content_id": "c_fd373e84c4f8",
+  "guess": "ai",
+  "label": "This piece has strong patterns that are common in AI-generated text. That isn't proof: clear, plain writing by a person can look like this too. If you wrote it yourself, you can ask a person to review it using the reference number shown with this result.",
+  "model_score": 0.7544,
+  "style_score": 0.7955
 }
 ```
-
-<!-- Milestone 3 snapshot: only the model signal is wired in. confidence is
-     just model_score for now; style_score and the label arrive in
-     Milestones 4 and 5. Re-run this once they do. -->
 
 **An appeal**
 
 ```bash
 $ curl -X POST http://127.0.0.1:5000/appeal \
   -H "Content-Type: application/json" \
-  -d '{"content_id": "...", "reasoning": "..."}'
-```
-
-```json
-
-```
-
-**What the log shows afterwards**
-
-```bash
-$ curl "http://127.0.0.1:5000/log?limit=1"
+  -d '{"content_id": "c_fd373e84c4f8", "reasoning": "I wrote this myself for a workplace newsletter. I write in a plain, structured way because that is how I was taught to write reports."}'
 ```
 
 ```json
 {
-  "count": 1,
-  "entries": [
-    {
-      "combined_score": 0.8033,
-      "content_id": "c_9a65a77f5414",
-      "creator_id": "dan",
-      "guess": "unsure",
-      "label": "PLACEHOLDER — labels arrive in Milestone 5.",
-      "model_score": 0.8033,
-      "status": "decided",
-      "style_score": null,
-      "timestamp": "2026-11-09T03:31:16+00:00"
-    }
-  ]
+  "content_id": "c_fd373e84c4f8",
+  "message": "Thanks. Your appeal is recorded and a person will review this result. Keep your reference number in case you need to follow up.",
+  "status": "under_review"
 }
+```
+
+An unknown id gets a 404, and a missing `reasoning` gets a 400:
+
+```json
+{"error": "not_found", "message": "We couldn't find a result with reference c_doesnotexist. Check it matches the one shown with your result."}
+{"error": "bad_request", "message": "Tell us in \"reasoning\" why you think the result is wrong."}
+```
+
+**What the log shows afterwards**
+
+Every log entry for `c_fd373e84c4f8` (test rejections filtered out). The appeal entries sit next to the original decision and move the status from `decided` to `under_review`. The decision itself is never rewritten, so the record shows what was decided and what happened after. I appealed this item twice while testing, and both appeals are recorded.
+
+```bash
+$ curl -s "http://127.0.0.1:5000/log" \
+  | jq '[.entries[] | select(.content_id == "c_fd373e84c4f8" and .event != "rejected")]'
+```
+
+```json
+[
+  {
+    "timestamp": "2026-11-09T03:44:25+00:00",
+    "content_id": "c_fd373e84c4f8",
+    "creator_id": "demo_instructor",
+    "guess": "ai",
+    "model_score": 0.7544,
+    "style_score": 0.7955,
+    "combined_score": 0.775,
+    "label": "This piece has strong patterns that are common in AI-generated text. That isn't proof: clear, plain writing by a person can look like this too. If you wrote it yourself, you can ask a person to review it using the reference number shown with this result.",
+    "status": "decided"
+  },
+  {
+    "timestamp": "2026-11-09T03:44:30+00:00",
+    "content_id": "c_fd373e84c4f8",
+    "creator_id": "demo_instructor",
+    "event": "appeal",
+    "status": "under_review",
+    "reasoning": "I wrote this myself for a workplace newsletter. I write in a plain, structured way because that is how I was taught to write reports."
+  },
+  {
+    "timestamp": "2026-11-09T03:44:45+00:00",
+    "content_id": "c_fd373e84c4f8",
+    "creator_id": "demo_instructor",
+    "event": "appeal",
+    "status": "under_review",
+    "reasoning": "I wrote this myself for a workplace newsletter. I write in a plain, structured way because that is how I was taught to write reports."
+  }
+]
 ```
 
 ---
@@ -255,15 +291,15 @@ $ curl "http://127.0.0.1:5000/log?limit=1"
 
 **Moment 1**
 
-- *What I asked for:*
-- *What came back:*
+- *What I asked for:* Help with building on the stylometry.py
+- *What came back:* Implemention of the stylometry functions with a description of what it has done.
 - *What I changed:*
 
 **Moment 2**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* Help with understand the repo so I can help with building the criteria.
+- *What came back:* Give a description of the important files as well as example criterias. 
+- *What I changed:* Had to make it give unrelated criterias.
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
