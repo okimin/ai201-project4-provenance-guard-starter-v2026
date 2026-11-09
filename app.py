@@ -226,11 +226,15 @@ def submit():
     # Step 3 - one real signal, first tested from the terminal:
     #   python detector.py "some text"
     import detector
+    import scoring
+    import stylometry
     model_score = detector.model_signal(text)
 
-    # Placeholders until Milestones 4 and 5
-    style_score = None
-    confidence = model_score
+    # Milestone 4 - the second signal, and one combined score
+    style_score = stylometry.style_signal(text)
+    confidence = scoring.combine_signals(model_score, style_score)
+
+    # Placeholder until Milestone 5
     guess = "unsure"
     label = "PLACEHOLDER — labels arrive in Milestone 5."
 

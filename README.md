@@ -111,9 +111,36 @@
 <!-- Write the rule in words, then give the numbers. What happens when the two
      signals disagree? -->
 
-**The rule:**
+**The rule:** Average the two signals with equal weight. If they disagree by a lot, the combined score is capped just below the AI band. A split can come out "unsure" or "human" but never "high-confidence AI", because an accusation needs both signals to point the same way.
 
 **The numbers:**
+
+- `WEIGHT_MODEL_SIGNAL = 0.5`, `WEIGHT_STYLE_SIGNAL = 0.5`
+- `DISAGREEMENT_GAP = 0.35`: if `|model_score − style_score| ≥ 0.35`, the signals count as split.
+- `DISAGREEMENT_CAP = 0.60`: a split's combined score can't go above 0.60. That's below the AI cutoff now (0.65) and below the one I plan to set (0.75–0.80).
+- All of these live in `config.py`.
+
+**How the style signal is built** (`stylometry.py::style_signal`): each measure is placed on a 0–1 "AI-ness" scale between two anchors I took from the calibration inputs. The three are then combined 0.4 / 0.4 / 0.2.
+
+| Measure | Scores 0.0 (human) at | Scores 1.0 (AI) at | Weight |
+|---|---|---|---|
+| Sentence-length spread (stdev ÷ mean) | 0.90 | 0.30 | 0.4 |
+| Punctuation density (`, ; : ! ? ( ) " —` per word, full stops excluded) | 0.12 | 0.02 | 0.4 |
+| Type-token ratio (moving average over 50 words, so length doesn't skew it) | 0.75 | **0.95** | 0.2 |
+
+Type-token ratio runs **the opposite way** from the usual hint. In every calibration input, AI text had the *most* varied vocabulary (0.91–0.93) and plain human writing the least (0.76). Plain writers are the people this system wrongly accuses, so scoring varied vocabulary as AI-like also protects them. It gets the lowest weight because it rests on only five texts. Text under 30 words or 3 sentences gets a style score of 0.5, meaning no opinion.
+
+**Calibration inputs:**
+
+| Input | model | style | combined | Which signal is off? |
+|---|---|---|---|---|
+| Clearly AI (`samples/clearly_ai.json`) | 0.754 | 0.795 | **0.775** | Neither. They agree. |
+| Clearly human (`samples/clearly_human.json`) | 0.445 | 0.070 | **0.257** | Model: it reads it as close to a coin flip. |
+| Plain human (short sentences, simple words) | 0.853 | 0.811 | **0.832** | **Both.** It scores higher than the clearly-AI text. |
+| Lightly edited AI (contractions, a dash, "honestly") | 0.606 | 0.526 | **0.566** | Both drift toward human. A light edit moves it into unsure. |
+| Borderline (`samples/borderline.json`) | 0.349 | 0.498 | **0.424** | Model reads it as *more* human than the clearly-human sample. |
+
+The plain-human result is the false positive traced in Milestone 1. Short, even sentences and no commas look AI-like to style, and common words look AI-like to the model. Both signals fail in the same direction, so no combining rule can rescue it. The only protection is where the AI cutoff sits (Milestone 5), the appeal path, and wording the AI label as "patterns common in AI text."
 
 **Where it lives:** `scoring.py::combine_signals`
 
@@ -121,6 +148,10 @@
      somewhere else, say where. -->
 
 **A case where my two signals split, and what my rule does with it:**
+
+The clearly-human sample: `model_score` 0.445, `style_score` 0.070, a gap of 0.37. The model finds the wording fairly predictable ("I didn't sleep", "the long way round to work"). Style sees sentence lengths ranging from 2 to over 40 words, plus dashes, colons and quotes, all strongly human. The gap is over 0.35, so the cap applies. The average is already 0.257, under the cap, so the result stays 0.257 and the piece is labelled human.
+
+The cap matters for the mirror case, a split that averages *high*. Model 0.95 with style 0.40 averages 0.675, which is "high-confidence AI" under the default 0.65 cutoff. My rule holds it at 0.60, which is unsure. One signal alone can't accuse someone.
 
 
 
