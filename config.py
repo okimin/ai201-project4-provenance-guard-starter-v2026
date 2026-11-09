@@ -46,6 +46,10 @@ DETECTOR_MODEL = os.getenv("AI201_DETECTOR_MODEL", "gpt2")
 # 300 words, which is enough for the signal to mean something.
 DETECTOR_MAX_TOKENS = 400
 
+# Longest `text` /submit accepts. Anything longer gets a 400 before the model
+# runs. 20,000 characters is roughly 3,500 words — more than any single post.
+MAX_TEXT_CHARS = 20_000
+
 
 # ─── Scoring (Milestone 4) ───────────────────────────────────────────────────
 # How much each signal counts toward the combined score.

@@ -163,12 +163,23 @@
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "...", "creator_id": "..."}'
+  -d '{"text": "The importance of effective time management cannot be overstated in today'"'"'s fast-paced work environment. Professionals who develop strong organizational habits are better positioned to meet deadlines and reduce stress. There are several key strategies that can help individuals improve their productivity.", "creator_id": "dan"}'
 ```
 
 ```json
-
+{
+  "confidence": 0.8033,
+  "content_id": "c_9a65a77f5414",
+  "guess": "unsure",
+  "label": "PLACEHOLDER — labels arrive in Milestone 5.",
+  "model_score": 0.8033,
+  "style_score": null
+}
 ```
+
+<!-- Milestone 3 snapshot: only the model signal is wired in. confidence is
+     just model_score for now; style_score and the label arrive in
+     Milestones 4 and 5. Re-run this once they do. -->
 
 **An appeal**
 
@@ -185,11 +196,26 @@ $ curl -X POST http://127.0.0.1:5000/appeal \
 **What the log shows afterwards**
 
 ```bash
-$ curl "http://127.0.0.1:5000/log?limit=3"
+$ curl "http://127.0.0.1:5000/log?limit=1"
 ```
 
 ```json
-
+{
+  "count": 1,
+  "entries": [
+    {
+      "combined_score": 0.8033,
+      "content_id": "c_9a65a77f5414",
+      "creator_id": "dan",
+      "guess": "unsure",
+      "label": "PLACEHOLDER — labels arrive in Milestone 5.",
+      "model_score": 0.8033,
+      "status": "decided",
+      "style_score": null,
+      "timestamp": "2026-11-09T03:31:16+00:00"
+    }
+  ]
+}
 ```
 
 ---
