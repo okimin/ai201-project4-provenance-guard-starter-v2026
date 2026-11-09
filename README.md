@@ -39,6 +39,45 @@
 <!-- The path a submission takes, from arriving to the label a reader sees.
      Six or seven steps — this is the trace you wrote in Milestone 1. -->
 
+1. **Client → `POST /submit`**: the body is JSON with `text` and `creator_id`.
+2. **Validation in `app.py`**: empty, missing or oversized text is rejected with a 400. Valid text continues.
+3. **`detector.model_signal`**: GPT-2 measures perplexity, which becomes `model_score` (0–1, higher means more AI-like).
+4. **`stylometry.style_signal`**: measures sentence-length spread, type-token ratio and punctuation density, which become `style_score` (0–1, same direction).
+5. **`scoring.combine_signals`**: a weighted average of the two scores gives one `confidence` number.
+6. **`scoring.score_to_label`**: turns that score into a guess and a label written for the reader (human, unsure or AI).
+7. **`audit.log_decision`**: assigns a `content_id` and logs both signal scores, the combined score, the label and the status. The response goes back to the reader. If they dispute it, `/appeal` with that `content_id` moves the item to `under_review`.
+
+### Tracing a false positive
+
+- **Who:** a student writing in their second language submits an essay they wrote themselves. They use short, safe sentences and familiar words.
+- **Score:** low perplexity (about 22) gives a `model_score` of about 0.76. Even sentences and repeated vocabulary give a `style_score` of about 0.60. Combined, that's about **0.68**.
+- **What they're told:** under the default 0.65 cutoff, **"high-confidence AI."** Both signals fail in the same direction for this writer, so averaging them doesn't help.
+- **What they can do:** `POST /appeal` with their `content_id` and their reasoning. The item moves to `under_review` for a human to check. Nothing is re-scored automatically.
+- **What this means for the thresholds:**
+  - The AI cutoff has to sit above where plain human writing lands, probably around 0.75–0.80. I'll confirm the exact number with the calibration inputs in Milestone 4.
+  - The "unsure" band should be wide.
+  - The AI label should say "patterns common in AI text," not "you used AI."
+  - Every response should show the `content_id` and explain how to appeal.
+
+### Endpoint contracts
+
+**`POST /submit`**
+
+- **In:** `text` (string, required, non-empty, with a size limit) and `creator_id` (string, optional, defaults to `"unknown"`).
+- **Out (200):**
+  - `content_id`: string
+  - `guess`: `"human"`, `"unsure"` or `"ai"`
+  - `confidence`: float 0–1, the combined score
+  - `label`: string, the exact text the reader sees
+  - `model_score`: float 0–1
+  - `style_score`: float 0–1
+- **Errors:** 400 `{error, message}` for bad input, and 429 when the rate limit is hit.
+
+**`POST /appeal`**
+
+- **In:** `content_id` (string, required, must already exist in the log) and `reasoning` (string, required, non-empty).
+- **Out (200):** `content_id`, `status: "under_review"`, and `message`, a plain-language confirmation.
+- **Errors:** 400 for a missing field, and 404 for an unknown `content_id`.
 
 
 ---
@@ -53,19 +92,19 @@
 
 ### Signal one — the model signal
 
-**What it measures:**
+**What it measures:** How predictable each next word is to GPT-2 (perplexity), mapped to a 0–1 score where low perplexity means a high AI score.
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** A model writes by picking likely next words, so its output is easy for a model to predict. People make odder, more specific word choices.
 
-**What it can't see:**
+**What it can't see:** Who wrote the text. It rewards plain, common words, so ESL writers, young writers and deliberately plain writers score as AI. Ornate AI prose full of rare words scores as human.
 
 ### Signal two — the style signal
 
-**What it measures:**
+**What it measures:** The shape of the text: how much sentence length varies, how much vocabulary repeats (type-token ratio), and how dense and varied the punctuation is.
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** Generated prose tends toward even, mid-length sentences and a narrower vocabulary. Human writing is lumpier, with a three-word sentence next to a forty-word one.
 
-**What it can't see:**
+**What it can't see:** What the text means. Typos, chopped-up sentences or a pasted quotation change the shape without changing who wrote it. Type-token ratio also falls as text gets longer, so length alone can look like a signal.
 
 ### The combining rule
 
