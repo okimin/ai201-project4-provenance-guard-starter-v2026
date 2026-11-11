@@ -1546,6 +1546,76 @@ The after-run output for every criterion is identical to the before-run output (
 <!-- For each attack still getting through and each criterion still missed:
      what you'd do, and why you stopped. -->
 
+After the improvement, **13 attacks still get through and one criterion is still missed**: all ten evasions, MF02, MF03, MF04 and criterion 4. They come down to the four problems from the diagnosis that I didn't change.
+
+| Still broken | Problem | Stage |
+|---|---|---|
+| MF02 | 5: route doesn't catch a signal exception | Route |
+| EV07, EV08, MF03, MF04 | 2: "no opinion" counts as a full vote | Combining rule |
+| EV01–EV06, EV09, EV10 | 3: no headroom above real AI text (EV04 and EV10 are new since the improvement) | Label mapping |
+| EV01 (also), MF03, MF04 (also) | 4: signal one reads noise as human | Signal one |
+| Criterion 4 | Middle-collapse | Label mapping + signal one |
+
+### MF02: a single character still returns a 500 (Problem 5, route)
+
+**What I'd do:**
+
+- Wrap the signal calls in `app.py::submit` in a `try/except ValueError`.
+- Return a 400 that says the text is too short to check, and log it with `audit.log_rejection(reason="text_too_short")`.
+- Better still, add a minimum-length check (say 30 words) before any signal runs, so text too short to judge never reaches the model.
+
+**Why I stopped:** the assignment allows one change, and a crash on one-character input harms no writer. It's a few lines, though, and it's the first thing I'd ship. It also closes a hole in the audit trail, because right now a crash leaves no log entry at all.
+
+### EV07, EV08, MF03, MF04: "no opinion" still counts as a vote (Problem 2, combining rule)
+
+**What I'd do:** when `style_signal` returns its 0.5 placeholder, drop style from the average in `scoring.py::combine_signals` and use the model score alone. Then cap that result into "unsure" either way, because one signal shouldn't accuse *or* clear on its own. That makes the disagreement cap work in both directions, which it should have done from the start.
+
+**Effect:**
+
+- MF03 and MF04 would go from "human" to "unsure".
+- EV07 and EV08 would stay "unsure". The attacker still escapes the AI label, but no longer gets anywhere near "human".
+- A short genuine submission (FP08) would also stay "unsure", which is the honest answer for 7 words.
+- Combined with the MF02 minimum-length check, MF03 and MF04 would be rejected outright instead.
+
+**Why I stopped:** one change only. I chose Problem 1 first because false positives accuse real people, and these four mostly don't. MF03 and MF04 are junk text getting a "human" label. That's embarrassing, but it hurts nobody.
+
+### EV01–EV06, EV09, EV10: AI text escapes with any edit (Problem 3, label mapping)
+
+**What I'd do:** nothing quick, and I'd be honest about that.
+
+- **Lowering the cutoff is out.** The only fast lever is moving the AI cutoff down from 0.75, but every point I lower it brings back the false positives I just removed. FP05 sits at 0.715 and FP04 at 0.689.
+- **The real fix is a signal that separates plain human writing from AI.** At the moment both signals mostly measure "plain", and plain writing is common to both. That needs more calibration text, especially plain human writing (ESL, formal and technical), to set anchors from a real distribution instead of a handful of paragraphs.
+- **Short-term, I'd stop treating "unsure" as a pass.** If the site needs to catch AI text, a reviewer could look at items scoring in the top of the unsure band (0.70–0.75) without the label ever saying "AI".
+
+**Why I stopped:** this needs data I don't have, not code. My calibration rests on about five paragraphs. I also want to be clear that **EV04 and EV10 were caught before my improvement** and are now loose. That was the price of the improvement, not something that was already broken.
+
+### EV01, plus MF03 and MF04: noise reads as human (Problem 4, signal one)
+
+**What I'd do:** have signal one ignore tokens GPT-2 has never seen as real words. Two options:
+
+- Spell-normalise the text before measuring perplexity.
+- Measure perplexity only over tokens that are dictionary words.
+
+Typos and junk would then stop counting as human surprise.
+
+**Why I stopped:** it's a change to signal one's input, and it needs its own calibration pass. Problem 2's fix would already stop MF03 and MF04 from getting "human", and EV01 is already "unsure", so the damage here is contained.
+
+### Criterion 4: my own informal writing lands in "unsure" (middle-collapse)
+
+**Still missed:** 2 of 3 clearly-human inputs in "unsure" every trial, the same before and after.
+
+**What I'd do:**
+
+- Recalibrate signal one's midpoint (perplexity 45 → 0.5) against a set of real human writing, so ordinary prose scores below 0.5 instead of right on it.
+- Alternatively, raise the human cutoff from 0.35 to about 0.45. That would move my video brief (0.434) to "human", but not the STEM Hive post (0.494). Criterion 4 would pass at exactly 1 of 3.
+- I'd also tighten criterion 1 as the diagnosis says. At the moment it passes even though none of my ten pieces is believed.
+
+**Why I stopped:**
+
+- Raising the human cutoff widens the "human" band, and that has its own cost. At 0.45, EV05 (0.408, AI text with a heavy human edit), EV08 (0.373) and RQ02 (0.370) would all be labelled human. So would PI01 (0.402) and PI02 (0.436), the two injection attacks that *ask* to be labelled human, so they'd look like they'd worked. That's a new kind of break: the system would clear AI text.
+- Recalibrating signal one moves every score in the system and needs a fresh calibration and a fresh attack run.
+
+Neither fits in one change, and I'd rather report the miss than lower the target.
 
 
 **The trade I'd make if this ran for real:**
@@ -1553,7 +1623,7 @@ The after-run output for every criterion is identical to the before-run output (
 <!-- Two sentences. Fewer wrong accusations means more AI text getting through.
      Say which way you'd go and WHO PAYS FOR IT. -->
 
-
+I'd go the way my improvement went: accept more AI text getting labelled "unsure" so that no plain, careful or second-language writer is told their work looks machine-made. The site and its honest writers pay for that through less reliable detection. Some AI text gets through unflagged, and moderators have to do more of the catching by hand, but that cost is spread across the platform instead of landing on one person who did nothing wrong.
 
 <!-- ═════════════════════════════════════════════════════════════════════
 
