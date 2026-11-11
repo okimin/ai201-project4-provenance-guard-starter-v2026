@@ -47,6 +47,13 @@ WEIGHT_SPREAD = 0.4
 WEIGHT_PUNCT = 0.4
 WEIGHT_TTR = 0.2
 
+# Punctuation density turns around below this value. UNIT 8 improvement.
+# Every AI calibration input sat at 0.043-0.055, and the human writers the
+# attack set accused (formal, ESL, rubric, docs, template) sat BELOW that, at
+# 0.000-0.029. Sparser than any AI text is evidence of a plain human writer,
+# not of AI, so AI-ness falls back to 0 between here and no punctuation.
+PUNCT_AI_FLOOR = 0.04
+
 
 def sentences(text: str) -> list[str]:
     """Split into sentences. Rough and good enough — given to you."""
@@ -171,12 +178,19 @@ def style_signal(text: str) -> float:
     #
     #   spread  low  = AI-like   (sentences march in step)
     #   punct   low  = AI-like   (few commas, dashes, semicolons, quotes)
+    #                              — but only down to PUNCT_AI_FLOOR. Below
+    #                              that it turns around (see the constant).
     #   ttr     HIGH = AI-like   — the opposite of the usual hint. In every
     #           calibration input the AI text used the most varied vocabulary
     #           and plain human writing the least. Flipping it also protects
     #           plain writers, who are the people this signal wrongly accuses.
     spread_ai = _scale(sentence_length_spread(text), human=0.90, ai=0.30)
-    punct_ai = _scale(punctuation_density(text), human=0.12, ai=0.02)
+    punct = punctuation_density(text)
+    if punct >= PUNCT_AI_FLOOR:
+        punct_ai = _scale(punct, human=0.12, ai=0.02)       # unchanged above the floor
+    else:
+        peak = _scale(PUNCT_AI_FLOOR, human=0.12, ai=0.02)  # 0.8, where the two lines meet
+        punct_ai = peak * punct / PUNCT_AI_FLOOR            # falls to 0 at no punctuation
     ttr_ai = _scale(type_token_ratio(text), human=0.75, ai=0.95)
 
     score = (

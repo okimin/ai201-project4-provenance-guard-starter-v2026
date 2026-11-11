@@ -125,7 +125,7 @@
 | Measure | Scores 0.0 (human) at | Scores 1.0 (AI) at | Weight |
 |---|---|---|---|
 | Sentence-length spread (stdev ÷ mean) | 0.90 | 0.30 | 0.4 |
-| Punctuation density (`, ; : ! ? ( ) " —` per word, full stops excluded) | 0.12 | 0.02 | 0.4 |
+| Punctuation density (`, ; : ! ? ( ) " —` per word, full stops excluded) | 0.12 (and, since unit 8, 0.00) | 0.02, peaking at 0.8 at 0.04 (unit 8: turns around below `PUNCT_AI_FLOOR`; see The Improvement) | 0.4 |
 | Type-token ratio (moving average over 50 words, so length doesn't skew it) | 0.75 | **0.95** | 0.2 |
 
 Type-token ratio runs **the opposite way** from the usual hint. In every calibration input, AI text had the *most* varied vocabulary (0.91–0.93) and plain human writing the least (0.76). Plain writers are the people this system wrongly accuses, so scoring varied vocabulary as AI-like also protects them. It gets the lowest weight because it rests on only five texts. Text under 30 words or 3 sentences gets a style score of 0.5, meaning no opinion.
@@ -1322,19 +1322,221 @@ Criteria 3 and 5 are route checks with exact expected status codes, so they're e
 
 **What I changed:**
 
-**Which diagnosis pointed at it:**
+One change, to one measure inside signal two: the punctuation density measure in `stylometry.py::style_signal`. It now turns around below a new constant, `PUNCT_AI_FLOOR = 0.04`.
+
+- **At 0.04 and above, nothing changed.** It's the same line as before, with human at 0.12 and AI at 0.02.
+- **Below 0.04,** which is sparser than any AI calibration text, AI-ness falls in a straight line from 0.8 to 0 at no punctuation. Very sparse punctuation now counts as a sign of a plain human writer, not of AI.
+
+```python
+punct = punctuation_density(text)
+if punct >= PUNCT_AI_FLOOR:
+    punct_ai = _scale(punct, human=0.12, ai=0.02)       # unchanged above the floor
+else:
+    peak = _scale(PUNCT_AI_FLOOR, human=0.12, ai=0.02)  # 0.8, where the two lines meet
+    punct_ai = peak * punct / PUNCT_AI_FLOOR            # falls to 0 at no punctuation
+```
+
+The 0.04 comes from the calibration inputs, not the attack set. The three clearly-AI inputs scored 0.0435, 0.0549 and 0.0532. Every human calibration input and all ten of my own pieces scored 0.046 or higher. The writers the attack set accused scored 0.000–0.029. I left all weights, cutoffs, the combining rule and signal one untouched.
+
+**Which diagnosis pointed at it:** Problem 1, the one behind all five false positives. Plain and formal writers use *less* punctuation than real AI text does, so the old measure rated them more AI-like than the AI. I chose it over the cheaper Problem 2 fix because a false positive accuses a real person. This was the expensive error, and the attack set's FP family was where it showed up.
+
+Before changing anything, I simulated the change offline, using the before run's model scores (GPT-2 gives the same score every time) with the new style scores. The prediction matched the real after-run on every row.
 
 ### Attack Run — After
 
 <!-- Same format. `run_attacks.py --label after` -->
 
+`python run_attacks.py --set attack_set --label after`. Before: [`results/attack_run_2026-11-11_0000.md`](results/attack_run_2026-11-11_0000.md). After: [`results/attack_run_2026-11-11_0034_after.md`](results/attack_run_2026-11-11_0034_after.md). I marked verdicts with the same rules as the before run. ⬅ marks a row whose verdict changed.
 
+| Family | Attacks | Before: held / broke | After: held / broke |
+|---|---|---|---|
+| evasion | 10 | 2 / 8 | **0 / 10** |
+| false_positive | 8 | 3 / 5 | **8 / 0** |
+| prompt_injection | 6 | 6 / 0 | 6 / 0 |
+| malformed | 20 | 17 / 3 | 17 / 3 |
+| flood_same_creator | 12 | 12 / 0 | 12 / 0 |
+| **Total** | **56** | **40 / 16** | **43 / 13** |
+
+| ID | Family | Before (guess, score) | After (guess, score) | style before → after | Before | After |
+|---|---|---|---|---|---|---|
+| EV01 | evasion | unsure 0.546 | unsure 0.518 | 0.9282 → 0.8718 | **BROKE** | **BROKE** |
+| EV02 | evasion | unsure 0.560 | unsure 0.518 | 0.5262 → 0.4422 | **BROKE** | **BROKE** |
+| EV03 | evasion | unsure 0.691 | unsure 0.691 | 0.7153 → 0.7153 | **BROKE** | **BROKE** |
+| EV04 ⬅ | evasion | ai 0.771 | unsure 0.741 | 0.9309 → 0.8697 | HELD | **BROKE** |
+| EV05 | evasion | unsure 0.408 | unsure 0.408 | 0.4952 → 0.4952 | **BROKE** | **BROKE** |
+| EV06 | evasion | unsure 0.511 | unsure 0.466 | 0.4484 → 0.3596 | **BROKE** | **BROKE** |
+| EV07 | evasion | unsure 0.543 | unsure 0.543 | 0.5 → 0.5 | **BROKE** | **BROKE** |
+| EV08 | evasion | unsure 0.373 | unsure 0.373 | 0.5 → 0.5 | **BROKE** | **BROKE** |
+| EV09 | evasion | unsure 0.738 | unsure 0.738 | 0.7722 → 0.7722 | **BROKE** | **BROKE** |
+| EV10 ⬅ | evasion | ai 0.858 | unsure 0.600 | 0.7374 → 0.3374 | HELD | **BROKE** |
+| FP01 | false_positive | unsure 0.684 | unsure 0.562 | 0.7513 → 0.5065 | HELD | HELD |
+| FP02 ⬅ | false_positive | ai 0.779 | unsure 0.632 | 0.8196 → 0.5252 | **BROKE** | HELD |
+| FP03 ⬅ | false_positive | ai 0.828 | unsure 0.600 | 0.8506 → 0.4506 | **BROKE** | HELD |
+| FP04 ⬅ | false_positive | ai 0.830 | unsure 0.689 | 0.8266 → 0.5442 | **BROKE** | HELD |
+| FP05 ⬅ | false_positive | ai 0.783 | unsure 0.715 | 0.7656 → 0.6288 | **BROKE** | HELD |
+| FP06 ⬅ | false_positive | ai 0.771 | unsure 0.600 | 0.6599 → 0.3847 | **BROKE** | HELD |
+| FP07 | false_positive | unsure 0.600 | unsure 0.600 | 0.4571 → 0.3839 | HELD | HELD |
+| FP08 | false_positive | unsure 0.411 | unsure 0.411 | 0.5 → 0.5 | HELD | HELD |
+| PI01 | prompt_injection | unsure 0.602 | unsure 0.402 | 0.7415 → 0.3415 | HELD | HELD |
+| PI02 | prompt_injection | unsure 0.436 | unsure 0.436 | 0.6679 → 0.6679 | HELD | HELD |
+| PI03 | prompt_injection | unsure 0.701 | unsure 0.701 | 0.8066 → 0.8066 | HELD | HELD |
+| PI04 | prompt_injection | unsure 0.556 | unsure 0.556 | 0.6119 → 0.6119 | HELD | HELD |
+| PI05 | prompt_injection | unsure 0.570 | unsure 0.570 | 0.5 → 0.5 | HELD | HELD |
+| PI06 | prompt_injection | unsure 0.662 | unsure 0.533 | 0.7656 → 0.5072 | HELD | HELD |
+| MF01 | malformed | 400 | 400 | — | HELD | HELD |
+| MF02 | malformed | 500 | 500 | — | **BROKE** | **BROKE** |
+| MF03 | malformed | human 0.250 | human 0.250 | 0.5 → 0.5 | **BROKE** | **BROKE** |
+| MF04 | malformed | human 0.256 | human 0.256 | 0.5 → 0.5 | **BROKE** | **BROKE** |
+| MF05 | malformed | unsure 0.600 | unsure 0.600 | 0.5 → 0.5 | HELD | HELD |
+| MF06 | malformed | unsure 0.600 | unsure 0.600 | 0.5 → 0.5 | HELD | HELD |
+| MF07 | malformed | unsure 0.600 | unsure 0.600 | 0.5 → 0.5 | HELD | HELD |
+| MF08 | malformed | 400 | 400 | — | HELD | HELD |
+| RQ01 | malformed | 400 | 400 | — | HELD | HELD |
+| RQ02 | malformed | unsure 0.370 | unsure 0.370 | 0.5 → 0.5 | HELD | HELD |
+| RQ03 | malformed | 400 | 400 | — | HELD | HELD |
+| RQ04 | malformed | 400 | 400 | — | HELD | HELD |
+| RQ05 | malformed | 400 | 400 | — | HELD | HELD |
+| RQ06 | malformed | human 0.275 | human 0.275 | 0.5 → 0.5 | HELD | HELD |
+| RQ07 | malformed | 400 | 400 | — | HELD | HELD |
+| RQ08 | malformed | 400 | 400 | — | HELD | HELD |
+| RQ09 | malformed | 400 | 400 | — | HELD | HELD |
+| RQ10 | malformed | 429 | 429 | — | HELD | HELD |
+| RQ11 | malformed | 429 | 429 | — | HELD | HELD |
+| RQ12 | malformed | 400 | 400 | — | HELD | HELD |
+| FL01_01–12 | flood_same_creator | `200 200 200 200 200 429 429 429 429 429 429 429` | `200 200 200 200 200 429 429 429 429 429 429 429` | — | HELD ×12 | HELD ×12 |
+
+### Run Log — After
+
+`python run_eval.py --label after`, three trials. Before: [`results/run_2026-11-11_0020_before.md`](results/run_2026-11-11_0020_before.md). After: [`results/run_2026-11-11_0034_after.md`](results/run_2026-11-11_0034_after.md).
+
+| Criterion | Target | Before: Run 1 / 2 / 3 | Before | After: Run 1 / 2 / 3 | After |
+|---|---|---|---|---|---|
+| 1. My own writing labelled high-confidence AI | ≤ 1 of 10 | 0/10 · 0/10 · 0/10 | MET | 0/10 · 0/10 · 0/10 | MET |
+| 2. Clearly-AI average minus clearly-human average | ≥ 0.30 | 0.403 · 0.403 · 0.403 | MET | 0.403 · 0.403 · 0.403 | MET |
+| 3. Appeals → 200 + `under_review` + logged; unknown → 404 | 10/10, 2/2 | 10/10, 2/2 ×3 | MET | 10/10, 2/2 ×3 | MET |
+| 4. All three labels reached; ≤ 1 of 3 clearly-human in "unsure" | 3/3, ≤ 1 | 3/3, 2 of 3 ×3 | MISSED | 3/3, 2 of 3 ×3 | MISSED |
+| 5. Bad input → 400 `{error, message}`, logged | 4 of 4 | 4/4 ×3 | MET | 4/4 ×3 | MET |
+
+The after-run output for every criterion is identical to the before-run output (see Run Log and Verdicts above). The only differences are `content_id`s and timestamps. That's expected: every calibration input and every piece of my own writing has punctuation density of 0.0435 or higher, so none of them reached the code I changed.
+
+**Real output from the after run** (`run_eval.py::main` → `app.py::submit`, criterion 4, trial 1, abridged to the fields that matter):
+
+```json
+[
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.775,
+    "model_score": 0.7544,
+    "style_score": 0.7955,
+    "sent": "The importance of effective time management cannot be overstated in to"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.7787,
+    "model_score": 0.6999,
+    "style_score": 0.8574,
+    "sent": "Remote work has fundamentally transformed the modern workplace. Organi"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.8394,
+    "model_score": 0.9073,
+    "style_score": 0.7714,
+    "sent": "Regular physical activity offers numerous benefits for both physical a"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.4236,
+    "model_score": 0.3489,
+    "style_score": 0.4983,
+    "sent": "Time management matters more than people admit, especially now that wo"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.659,
+    "model_score": 0.5813,
+    "style_score": 0.7366,
+    "sent": "Time management matters a lot in todays fast-paced work environment. P"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.4082,
+    "model_score": 0.3212,
+    "style_score": 0.4952,
+    "sent": "Communication at work matters more than people say it does — and I mea"
+  },
+  {
+    "status": 200,
+    "guess": "human",
+    "confidence": 0.2572,
+    "model_score": 0.4445,
+    "style_score": 0.07,
+    "sent": "I didn't sleep. Not properly, anyway — I lay there listening to the bo"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.4936,
+    "model_score": 0.5183,
+    "style_score": 0.469,
+    "sent": "Hey guys. I have admitted defeat for the gif pause challenge. Your rew"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.4339,
+    "model_score": 0.3925,
+    "style_score": 0.4753,
+    "sent": "We have a questionnaire of topics that you can talk about. However we "
+  }
+]
+```
 
 **Did it help, and how do I know:**
 
 <!-- Widening the unsure band usually fixes one problem and creates another.
      Reporting that trade honestly is worth full credit. -->
 
+**It did what it was meant to do.** It also cost something real, and I'm counting it as a trade, not a clean win.
+
+**What it fixed: all five false positives.**
+
+- FP02–FP06 went from "high-confidence AI" (0.771–0.830) to "unsure" (0.600–0.715).
+- Their style scores fell by 0.14–0.40. Their model scores didn't change, which shows the improvement came from exactly the measure I targeted.
+- FP03, the ESL writer and my worst outcome from the before run, went from 0.828 to 0.600. FP06 and EV10 also landed on exactly 0.600. That's my disagreement cap: with style now low, the two signals split by more than 0.35, and the rule I wrote in Milestone 4 caught it. The two fixes worked together.
+- **Overall, false positives went from 5 of 8 to 0 of 8.**
+
+**What it cost: the last two evasions got through.**
+
+- **EV10** (repeated stanza) has no punctuation at all, 0.000 per word. That's below the floor, so the change reads it as a plain human writer. Its style score fell from 0.737 to 0.337, it split from the model score (0.979), and the cap held it at 0.600 ("unsure").
+- **EV04** (unusual words) sits at 0.0330, just under the floor. It dropped from 0.771 to 0.741, just below the 0.75 cutoff.
+- **Evasion went from 8 of 10 broken to 10 of 10.** Now no AI text in the attack set reaches the AI label unless it's completely unedited.
+
+**Why I'd still keep it.**
+
+- The two errors don't cost the same. Five real writers lost an accusation, and two pieces of AI text lost a flag.
+- The trade comes from the measure itself, not from a slip in the change. Sparse punctuation is honestly ambiguous: it's what plain human writers do, *and* it's what a stripped-down AI output looks like. The old measure settled that ambiguity against the human. The new one settles it in their favour.
+- Nothing became an accusation: no row moved *into* the AI label.
+
+**What it didn't fix.**
+
+- **The 0.75 cutoff is still the narrow point (Problem 3).** FP05 sits at 0.715, only 0.035 below it, and the clean AI sample still scores just 0.775.
+- **The fixed writers only got as far as "unsure", not "human".** They now read "We can't tell either way" instead of "patterns common in AI". It's better, but it isn't belief.
+- **Criterion 4 is still missed, with identical numbers.** The change couldn't reach it, because my own informal writing was never below the floor. Its cause is the middle-collapse described in the diagnosis: signal one's floor plus the 0.35 human cutoff.
+- **MF02 still returns a 500, and MF03/MF04 are still labelled "human".** Those are Problems 5 and 2, which I didn't touch.
+
+**How I know it was this change and nothing else:**
+
+- The prediction matched every row exactly.
+- Only rows with punctuation below 0.04 changed.
+- Model scores, status codes, rate-limit 429s and all five criteria were identical across the before and after runs.
+- Before the after-runs, I restarted the service and confirmed it was serving the new code: FP03 returned style 0.4506, combined 0.600.
 
 
 ---
