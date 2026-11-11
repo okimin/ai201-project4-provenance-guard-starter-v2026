@@ -82,14 +82,10 @@ def log_appeal(content_id: str, creator_id: str, reasoning: str) -> dict:
     the whole point of an audit log. Someone reading it later can see what was
     decided, that it was challenged, and in what order.
     """
-    return _append({
-        "timestamp": _now(),
-        "content_id": content_id,
-        "creator_id": creator_id,
-        "event": "appeal",
-        "status": "under_review",
-        "reasoning": reasoning,
-    })
+    entry = _blank_entry(content_id=content_id, creator_id=creator_id,
+                         status="under_review")
+    entry.update(event="appeal", reasoning=reasoning)
+    return _append(entry)
 
 
 def log_rejection(creator_id: str, reason: str, **extra) -> dict:
@@ -102,14 +98,30 @@ def log_rejection(creator_id: str, reason: str, **extra) -> dict:
     thousand requests that got a 429 and left no trace look exactly like a
     quiet afternoon.
     """
-    return _append({
+    entry = _blank_entry(content_id=extra.pop("content_id", None),
+                         creator_id=creator_id, status="rejected")
+    entry.update(event="rejected", reason=reason, **extra)
+    return _append(entry)
+
+
+def _blank_entry(content_id, creator_id, status) -> dict:
+    """
+    The nine required fields, with the ones that don't apply set to null.
+
+    Appeals and rejections aren't decisions, but giving every line the same
+    shape means a reader (or a jq filter) never has to guess which keys exist.
+    """
+    return {
         "timestamp": _now(),
+        "content_id": content_id,
         "creator_id": creator_id,
-        "event": "rejected",
-        "status": "rejected",
-        "reason": reason,
-        **extra,
-    })
+        "guess": None,
+        "model_score": None,
+        "style_score": None,
+        "combined_score": None,
+        "label": None,
+        "status": status,
+    }
 
 
 def _append(entry: dict) -> dict:

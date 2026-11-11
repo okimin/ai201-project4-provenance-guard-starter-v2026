@@ -151,7 +151,7 @@ def health():
 # ── YOU BUILD THIS ────────────────────────────────────────────────────────────
 
 @app.post("/submit")
-# @limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute;{config.RATE_LIMIT_PER_DAY}/day")
+@limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute;{config.RATE_LIMIT_PER_DAY}/day")
 def submit():
     """
     Take a piece of text, decide about it, log the decision, answer.
@@ -305,6 +305,8 @@ def appeal():
     content_id = content_id.strip()
     decisions = [e for e in audit.entries_for(content_id) if e.get("status") == "decided"]
     if not decisions:
+        audit.log_rejection(creator_id="unknown", reason="appeal_unknown_content_id",
+                            content_id=content_id)
         return jsonify({
             "error": "not_found",
             "message": f"We couldn't find a result with reference {content_id}. "

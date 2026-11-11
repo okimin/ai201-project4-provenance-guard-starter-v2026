@@ -307,24 +307,19 @@ $ curl -s "http://127.0.0.1:5000/log" \
 
 ## Rate Limiting
 
-**My limits:** ___ per minute, ___ per day
+**My limits:** 5 per minute, 60 per day
 
 **Why those numbers and not others:**
-<!-- Think about two people: a real writer submitting their own work a few
-     times an hour, and a script sending a thousand variations to map your
-     thresholds. Your numbers have to be liveable for the first and hostile to
-     the second. -->
+A real writer submits a draft, fixes something, and resubmits, maybe a few times in an hour. Five a minute leaves room for quick resubmits, and 60 a day covers a heavy day of revising. A script sending 1,000 variations to map my thresholds would finish in minutes with no limit. At 60 a day it needs about 17 days per creator_id, and every refused attempt is written to the audit log as `rate_limited`, so the probing is visible.
 
-**What a caller counts as:** <!-- per address, or per creator_id? They fail
-differently — one script can look like a thousand callers, and one household
-can look like one. -->
+**What a caller counts as:** per `creator_id`, falling back to the caller's address when there isn't one. This is fair to a household or classroom sharing one IP. The weakness is that a script can make up a new `creator_id` for every request and get a fresh allowance each time. The per-day cap doesn't help with that, because it is also counted per creator_id.
 
 **The run of status codes when I pushed past it:**
 
 <!-- python run_attacks.py --flood 15 -->
 
 ```
-
+200 200 200 200 200 429 429 429 429 429 429 429 429 429 429
 ```
 
 ---
