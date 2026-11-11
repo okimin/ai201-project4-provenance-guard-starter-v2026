@@ -1228,6 +1228,92 @@ Produced by `run_eval.py::main`, which calls `/submit` (`app.py::submit`), and `
 
      Look for a pattern. Five failures on one signal is one problem, not five. -->
 
+There's one miss (criterion 4) and 16 broken attacks. They come down to **five problems**. Most of the failures fall under the first three.
+
+To see the three measures inside signal two, I scored every failing input with `stylometry.py`'s functions directly. The arrow shows each raw value's AI-ness after scaling, where 1.00 means fully AI-like. Weights are spread 0.4, punctuation 0.4 and type-token ratio 0.2.
+
+| Input | spread → AI-ness | punct → AI-ness | TTR → AI-ness | style | model | combined |
+|---|---|---|---|---|---|---|
+| `clearly_ai.json` (real AI) | 0.413 → 0.81 | 0.043 → 0.77 | 0.915 → 0.82 | 0.796 | 0.754 | 0.775 |
+| FP02 formal | 0.240 → 1.00 | 0.013 → **1.00** | 0.770 → 0.10 | 0.820 | 0.739 | 0.779 |
+| FP03 ESL | 0.328 → 0.95 | 0.000 → **1.00** | 0.819 → 0.35 | 0.851 | 0.805 | 0.828 |
+| FP04 rubric essay | 0.367 → 0.89 | 0.015 → **1.00** | 0.821 → 0.36 | 0.827 | 0.833 | 0.830 |
+| FP05 tech docs | 0.277 → 1.00 | 0.029 → **0.91** | 0.626 → 0.00 | 0.766 | 0.801 | 0.783 |
+| FP06 template | 0.519 → 0.63 | 0.016 → **1.00** | 0.756 → 0.03 | 0.660 | 0.881 | 0.771 |
+| EV02 broken-up sentences | 0.849 → 0.08 | 0.033 → 0.87 | 0.894 → 0.72 | 0.526 | 0.594 | 0.560 |
+| EV06 one long + one short | 1.186 → 0.00 | 0.033 → 0.87 | 0.849 → 0.49 | 0.448 | 0.573 | 0.511 |
+| EV07 semicolon padding | **1 sentence**, gate fires | | | 0.500 | 0.586 | 0.543 |
+| EV08 ten words | **10 words**, gate fires | | | 0.500 | 0.245 | 0.373 |
+| My STEM Hive post | 0.674 → 0.38 | 0.058 → 0.62 | 0.821 → 0.35 | 0.469 | 0.518 | 0.494 |
+| My video brief | 0.512 → 0.65 | 0.083 → 0.37 | 0.817 → 0.34 | 0.475 | 0.393 | 0.434 |
+
+### Problem 1: signal two's punctuation measure points the wrong way for plain writers (5 false positives)
+
+**FP02, FP03, FP04, FP05 and FP06 broke.**
+
+- **What these inputs share.** Each one is a real person writing formally or carefully: a formal report, an ESL writer, a rubric essay, technical documentation and a letter template. Every one uses fewer commas, dashes and quotes than the actual AI text does. Their punctuation density is 0.000–0.029 per word, against 0.043 for `clearly_ai.json`.
+- **Why that flags them.** I anchored "AI" at 0.02, so all five max out the punctuation measure at 0.91–1.00, *more* AI-like than the real AI text (0.77). Spread does the same thing: careful writers keep their sentences even (0.24–0.52), so it scores them 0.63–1.00.
+- **Together that's 80% of the style signal** pointing the wrong way. The only measure that protects them is type-token ratio (0.00–0.36). I flipped it for exactly this reason, but it only carries 0.2 of the weight.
+- **Signal one fails in the same direction.** Plain, common words are easy for GPT-2 to predict, so the model score is 0.74–0.88.
+- **The combining rule can't help.** The cap only acts when the signals split by 0.35 or more. Here they agree, with gaps of 0.01–0.22, so the average passes straight through.
+- **The label mapping lets it through.** All five land at 0.771–0.830, just over the 0.75 cutoff.
+
+**The stage is signal two. The mechanism is that its punctuation and spread anchors came from one AI paragraph, and plain human writing sits beyond that anchor on the AI side.** I made the same mistake with type-token ratio in Milestone 4 and fixed it there, but not here. This is one problem, not five.
+
+### Problem 2: signal two's "no opinion" counts as a full vote (EV07, EV08, MF03, MF04)
+
+**EV07, EV08, MF03 and MF04 broke.**
+
+- **When the gate fires.** `style_signal` returns 0.5 when text has fewer than 30 words or fewer than 3 sentences.
+- **How it gets triggered.** EV07 chains its whole text together with semicolons. The sentence splitter only breaks on `.`, `!` and `?`, so it sees **1 sentence** and the gate fires. EV08 is only ten words long. MF03 (control characters) and MF04 (punctuation only) have 3 and 0 words.
+- **Why it matters.** `scoring.py::combine_signals` averages that 0.5 at full weight. Half the final score is a placeholder, which halves signal one's influence and pulls everything towards the middle.
+- **EV07 and EV08:** AI text escaped the AI label just by being short or having no full stops.
+- **MF03 and MF04:** junk text got a confident human verdict. Signal one scored them 0.000 and 0.011, and an average of (0 + 0.5) / 2 = 0.25 is "high-confidence human". The disagreement cap only limits scores from above, so one signal on its own can clear a text even though it can't accuse one.
+
+**The stage is the combining rule. The mechanism is that "no opinion" is treated as a 0.5 vote instead of being left out, and the cap only works in one direction.**
+
+### Problem 3: the AI cutoff has almost no headroom above real AI text (EV03, EV05, EV09, plus EV02 and EV06)
+
+**EV03, EV05 and EV09 broke, and EV02 and EV06 broke partly for this reason.**
+
+- **The headroom.** Unedited AI text scores 0.775. I raised the cutoff to 0.75 to protect plain writers, which leaves AI text only 0.025 above it.
+- **EV03** (pasted quote) moved both signals slightly: the model fell from 0.754 to 0.666 and style from 0.796 to 0.715. It ended at 0.691.
+- **EV09** (human opening) ended at 0.738, 0.012 under the cutoff.
+- **EV05** is a heavy human rewrite (0.408). I think the system is honestly right to stop calling it AI.
+- **EV02 and EV06** went through spread. Spread is stdev ÷ mean over 6–13 sentences, so a single outlier dominates it. One very long sentence (EV06, spread 1.19) or a few one-word sentences (EV02, 0.85) is enough to zero out that measure, which is 0.4 of the style score.
+
+**The stage is the label mapping, with signal two's spread measure doing the pushing. The mechanism is that the AI band starts where real AI text ends, so any edit at all crosses the line.** This is the cost of Problem 1. I couldn't put the cutoff lower without accusing plain writers, because signal two can't tell plain writers from AI.
+
+### Problem 4: signal one reads noise as human (EV01, plus MF03, MF04 and EV08)
+
+**EV01 broke.**
+
+- **The attack was aimed at signal two**, adding typos to raise word variety. It did, but in the AI direction: style went *up* to 0.928, because I flipped type-token ratio.
+- **What actually moved was signal one.** GPT-2 has never seen "importnace" and finds it unpredictable. The model score fell from 0.754 to 0.164.
+- **The cap kicked in.** The signals split by 0.76, so the rule capped the result, and it landed in "unsure" at 0.546.
+
+**The stage is signal one. The mechanism is that perplexity measures surprise, and typos, junk and very short text are all surprising.** The same thing drives MF03 (0.000), MF04 (0.011) and EV08 (0.245). Signal one's strongest "human" readings in the whole run went to garbage. My own writing scored 0.36–0.75.
+
+### Problem 5: the route doesn't catch a signal exception (MF02)
+
+**MF02 broke.** A single character `"a"` passes validation, because it's a non-empty string. `detector.perplexity` then raises `ValueError("Text is too short to score…")` because one token has nothing to predict. `app.py::submit` doesn't catch it, so Flask returns an HTML 500. The exception happens before `audit.log_decision`, so **the request leaves no log entry at all**.
+
+**The stage is the route. The mechanism is that it validates "is this a non-empty string" but never "can the signals score this", and nothing catches a signal failure.**
+
+### Criterion 4 miss: everything collapses to the middle
+
+**Two of three clearly-human inputs landed in "unsure"**, and they were both my own informal writing (0.494 and 0.434).
+
+- **Signal two is middling on every measure** (0.469 and 0.475). Neither piece is extreme in any direction. The sample that did reach "human" scored 0.070 on style, because its sentences range from 2 to 40+ words and it's full of dashes and quotes.
+- **Signal one has a high floor for real prose.** Its midpoint is a perplexity of 45, which scores 0.5, and ordinary human writing sits around there. My ten pieces scored 0.36–0.75 on the model, and only noise ever gets it below 0.3 (Problem 4).
+
+So reaching the human band (under 0.35) takes a style score near 0.1, and only unusually showy prose gets that. **The stage is the label mapping together with signal one's midpoint. The mechanism is that, for ordinary human writing, neither signal ever moves far below 0.5, so the combined score can't reach 0.35.**
+
+### Was any target too easy?
+
+Criterion 1 passed (0 of 10 called AI), but **it passed for the same reason criterion 4 failed**. All ten of my pieces landed in "unsure", and none came back human. A criterion that only counts AI labels can't see that a writer is never believed. I'd tighten it to also require that at least half of my own pieces are labelled human. That target would have failed: 0 of 10.
+
+Criteria 3 and 5 are route checks with exact expected status codes, so they're either met or not. They held, but criterion 5 only lists four bad inputs, and the attack set found a fifth (a single character → 500) that it didn't cover.
 
 
 ---
