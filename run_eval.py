@@ -112,6 +112,13 @@ def main():
 
         trials = []
         for trial in range(1, args.trials + 1):
+            if scenario.get("appeals"):
+                results = run_appeals(requests, args, scenario)
+                marks = [r.get("appeal_status") or "—" for r in results]
+                print(f"  trial {trial}: appeal status {', '.join(str(m) for m in marks)}")
+                trials.append(results)
+                continue
+
             results = []
             for i, body in enumerate(bodies_for(scenario), 1):
                 preview = describe(body)
@@ -119,7 +126,7 @@ def main():
                     response = requests.post(f"{args.url}/submit", json=body,
                                              timeout=args.timeout)
                     payload = response.json() if response.content else {}
-                    results.append({
+                    result = {
                         "status": response.status_code,
                         "guess": payload.get("guess"),
                         "confidence": payload.get("confidence"),
@@ -127,18 +134,81 @@ def main():
                         "style_score": payload.get("style_score"),
                         "label": payload.get("label"),
                         "sent": preview,
-                    })
+                    }
+                    if payload.get("error"):
+                        result["error"] = payload.get("error")
+                        result["message"] = payload.get("message")
+                    if scenario.get("check_log"):
+                        result["log_entry"] = newest_log_entry(requests, args)
+                    results.append(result)
                 except Exception as exc:  # noqa: BLE001
                     results.append({"status": None, "error": f"{type(exc).__name__}: {exc}",
                                     "sent": preview})
 
             trials.append(results)
-            guesses = [r.get("guess") or "—" for r in results]
+            guesses = [r.get("guess") or str(r.get("status")) for r in results]
             print(f"  trial {trial}: {', '.join(guesses)}")
 
         rows.append({"scenario": scenario, "trials": trials})
 
     write_report(rows, args)
+
+
+def newest_log_entry(requests, args):
+    """The last line of the audit log, so a trial can show what got recorded."""
+    entries = requests.get(f"{args.url}/log", params={"limit": 1},
+                           timeout=args.timeout).json().get("entries", [])
+    return entries[-1] if entries else None
+
+
+def run_appeals(requests, args, scenario):
+    """
+    One trial of an appeal-path scenario.
+
+    For each text: submit it, appeal the content_id that came back, then look
+    in the audit log for an appeal entry against that id. Then appeal each of
+    the scenario's made-up ids, which should all come back 404.
+    """
+    results = []
+    reasoning = scenario.get("reasoning", "I wrote this myself.")
+    for i, text in enumerate(scenario["appeals"], 1):
+        body = {"text": text, "creator_id": f"eval_{scenario['name'][:12]}_{i}"}
+        try:
+            sub = requests.post(f"{args.url}/submit", json=body, timeout=args.timeout)
+            content_id = sub.json().get("content_id")
+            app = requests.post(f"{args.url}/appeal", timeout=args.timeout,
+                                json={"content_id": content_id, "reasoning": reasoning})
+            app_payload = app.json()
+            entries = requests.get(f"{args.url}/log", params={"limit": 5},
+                                   timeout=args.timeout).json().get("entries", [])
+            logged = [e for e in entries
+                      if e.get("content_id") == content_id and e.get("event") == "appeal"]
+            results.append({
+                "kind": "real_id",
+                "submit_status": sub.status_code,
+                "content_id": content_id,
+                "appeal_status": app.status_code,
+                "status_after": app_payload.get("status"),
+                "appeal_logged": bool(logged),
+                "log_entry": logged[-1] if logged else None,
+            })
+        except Exception as exc:  # noqa: BLE001
+            results.append({"kind": "real_id", "error": f"{type(exc).__name__}: {exc}"})
+
+    for content_id in scenario.get("unknown_ids", []):
+        try:
+            app = requests.post(f"{args.url}/appeal", timeout=args.timeout,
+                                json={"content_id": content_id, "reasoning": reasoning})
+            results.append({
+                "kind": "unknown_id",
+                "content_id": content_id,
+                "appeal_status": app.status_code,
+                "response": app.json(),
+            })
+        except Exception as exc:  # noqa: BLE001
+            results.append({"kind": "unknown_id", "content_id": content_id,
+                            "error": f"{type(exc).__name__}: {exc}"})
+    return results
 
 
 def write_report(rows, args):
